@@ -21,8 +21,6 @@
 # - https://www.alpinequest.net/en/help/v2/landmarks
 # - https://www.alpinequest.net/forum/viewtopic.php?f=3&t=3319
 #
-# TODO, ideas:
-# - merge all input into one gpx file
 
 use strict;
 use warnings;
@@ -694,7 +692,9 @@ package ApqFile
             my $type = unpack('C', $fileType);
             my %typeMap = ( 0x65 => 'wpt', 0x66 => 'set', 0x67 => 'rte', 0x68 => 'trk', 0x69 => 'are' );
             my $typeStr = $typeMap{$type} ? $typeMap{$type} : 'bin';
-            my $fileName = sprintf('UID%08X.%s', $entry->{uid}, $typeStr);
+            my $base1 = substr($self->{path}, 0, -4); # strip '.ldk'
+            my $base2 = $path; $base2 =~ s{/}{_}g;
+            my $fileName = sprintf('%s%sUID%08X.%s', $base1, $base2, $entry->{uid}, $typeStr);
             push(@{$node->{files}}, { name => $fileName, data => $fileData64, type => $typeStr, size => $dataSize, order => $entry->{_ix} });
         }
 
@@ -790,7 +790,6 @@ package ApqFile
 
         return $data;
     }
-
 
     sub _loadraw
     {
@@ -1262,6 +1261,7 @@ package App
     use XML::LibXML;
     use List::Util qw();
     use MIME::Base64 qw();
+    use Clone qw();
     #use DateTime;
 
     sub new
@@ -1274,6 +1274,7 @@ package App
         $self->{dojson} = 0;
         $self->{dogpx} = 0;
         $self->{dobin} = 0;
+        $self->{domerge} = 0;
         $self->{overwrite} = 0;
         $self->{outbase} = '';
 
@@ -1284,6 +1285,7 @@ package App
             elsif ($arg eq '-j') { $self->{dojson}++; }
             elsif ($arg eq '-g') { $self->{dogpx}++; }
             elsif ($arg eq '-b') { $self->{dobin}++; }
+            elsif ($arg eq '-m') { $self->{domerge}++; }
             elsif ($arg eq '-f') { $self->{overwrite} = 1; }
             elsif ($arg eq '-o') { $self->{outbase} = shift(@{$argv}); }
             elsif (-f $arg)      { push(@{$self->{files}}, $arg); }
@@ -1315,6 +1317,7 @@ package App
         $self->TRACE('run()');
 
         my $errors = 0;
+        my @allDatas = ();
         foreach my $file (@{$self->{files}})
         {
             $self->PRINT("Loading: %s", $file);
@@ -1355,39 +1358,67 @@ package App
                 push(@datas, $apq->data());
             }
 
-            # generate output
-            foreach my $data (@datas)
+            # merge?
+            if ($self->{domerge})
             {
-                my $base = $data->{path};
-                $base =~ s{\.[^.]+$}{};
-                if ($self->{outbase})
+                push(@allDatas, @datas);
+            }
+            # generate individual output
+            else
+            {
+                if (!$self->_procDatas(@datas))
                 {
-                    if (index($base, '/') > -1)
-                    {
-                        $base =~ s{^.*/}{$self->{outbase}};
-                    }
-                    else
-                    {
-                        $base =~ s{^}{$self->{outbase}};
-                    }
-                }
-                if ($self->{dojson})
-                {
-                    if (!$self->_writeJson($self->{outbase} eq '-' ? '-' : "$base.json", $data))
-                    {
-                        $errors++;
-                    }
-                }
-                if ($self->{dogpx} && ($data->{type} ne 'ldk'))
-                {
-                    if (!$self->_writeGpx($self->{outbase} eq '-' ? '-' : "$base.gpx", $data))
-                    {
-                        $errors++;
-                    }
+                    $errors++;
                 }
             }
         }
 
+        if ($self->{domerge})
+        {
+            my $data = $self->_combineDatas(@allDatas);
+            if (!$self->_procDatas($data))
+            {
+                $errors++;
+            }
+        }
+
+        return $errors ? 0 : 1;
+    }
+
+    sub _procDatas
+    {
+        my ($self, @datas) = @_;
+        my $errors = 0;
+        foreach my $data (@datas)
+        {
+            my $base = $data->{path};
+            $base =~ s{\.[^.]+$}{};
+            if ($self->{outbase})
+            {
+                if (index($base, '/') > -1)
+                {
+                    $base =~ s{^.*/}{$self->{outbase}};
+                }
+                else
+                {
+                    $base =~ s{^}{$self->{outbase}};
+                }
+            }
+            if ($self->{dojson})
+            {
+                if (!$self->_writeJson($self->{outbase} eq '-' ? '-' : "$base.json", $data))
+                {
+                    $errors++;
+                }
+            }
+            if ($self->{dogpx} && ($data->{type} ne 'ldk'))
+            {
+                if (!$self->_writeGpx($self->{outbase} eq '-' ? '-' : "$base.gpx", $data))
+                {
+                    $errors++;
+                }
+            }
+        }
         return $errors ? 0 : 1;
     }
 
@@ -1476,7 +1507,7 @@ package App
             $gpx->time($self->_gpx_time(List::Util::min(@ts))) if ($#ts > -1);
         }
         # track
-        elsif ($data->{type} eq 'trk')
+        elsif ( ($data->{type} eq 'trk') || ($data->{type} eq 'all') )
         {
             $self->_gpx_set_meta($gpx, $globalMeta);
             my @ts = ();
@@ -1510,6 +1541,12 @@ package App
         elsif ($data->{type} eq 'ldk')
         {
             return 1;
+        }
+        # unhandled
+        else
+        {
+            $self->ERROR('WTF?! type=%s', $data->{type});
+            return 0;
         }
 
         # render XML
@@ -1671,6 +1708,100 @@ package App
         return @datas;
     }
 
+    sub _combineDatas
+    {
+        my ($self, @datas) = @_;
+        my $all = { waypoints => [], segments => [], meta => { _order => [], _types => [] } };
+        my @metaComments = ();
+        foreach my $data (@datas)
+        {
+            $self->DEBUG('combine %s: %s', $data->{path}, $data);
+            if ($data->{type} eq 'wpt')
+            {
+                push(@{$all->{waypoints}}, { location => $data->{location}, meta => $data->{meta} });
+                push(@metaComments, $data->{file} . ($data->{meta}->{name} ? " ($data->{meta}->{name})" : ''));
+            }
+            elsif ($data->{type} eq 'set')
+            {
+                foreach my $wpt (@{$data->{waypoints}})
+                {
+                    $wpt->{meta} = $self->_mergeMeta($data->{meta}, $wpt->{meta});
+                    push(@{$all->{waypoints}}, $wpt);
+                }
+                push(@metaComments, $data->{file} . ($data->{meta}->{name} ? " ($data->{meta}->{name})" : ''));
+            }
+            elsif ($data->{type} eq 'are')
+            {
+                my $nLocations = $#{$data->{locations}} + 1;
+                for (my $ix = 0; $ix < $nLocations; $ix++)
+                {
+                    my $wpt = $data->{locations}->[$ix];
+                    my $meta = { _order => [ 'name' ], _types => [ 'string' ],
+                                 name => sprintf('location %d/%d', $ix + 1, $nLocations) };
+                    $wpt->{meta} = $self->_mergeMeta($data->{meta}, $meta);
+                    push(@{$all->{waypoints}}, $wpt);
+                }
+                push(@metaComments, $data->{file} . ($data->{meta}->{name} ? " ($data->{meta}->{name})" : ''));
+            }
+            elsif ($data->{type} eq 'rte')
+            {
+                my $nWaypoints = $#{$data->{waypoints}} + 1;
+                for (my $ix = 0; $ix < $nWaypoints; $ix++)
+                {
+                    my $wpt = $data->{locations}->[$ix];
+                    if (!$wpt->{meta}->{name})
+                    {
+                        $wpt->{meta}->{name} = sprintf('waypoint %d/%d', $ix + 1, $nWaypoints);
+                        push(@{$wpt->{meta}->{_order}}, 'name');
+                        push(@{$wpt->{meta}->{_types}}, 'string');
+                    }
+                    $wpt->{meta} = $self->_mergeMeta($data->{meta}, $wpt->{meta});
+                    push(@{$all->{waypoints}}, $wpt);
+                }
+                push(@metaComments, $data->{file} . ($data->{meta}->{name} ? " ($data->{meta}->{name})" : ''));
+            }
+            elsif ($data->{type} eq 'trk')
+            {
+                push(@{$all->{segments}}, @{$data->{segments}});
+                push(@metaComments, $data->{file} . ($data->{meta}->{name} ? " ($data->{meta}->{name})" : ''));
+            }
+            elsif ($data->{type} eq 'ldk')
+            {
+                # ignore
+            }
+        }
+
+        push(@{$all->{meta}->{_order}}, 'comment');
+        push(@{$all->{meta}->{_types}}, 'string');
+        $all->{meta}->{comment} = join("\n", "Combination of:", @metaComments);
+        $all->{type} = 'all';
+        $all->{file} = 'merged.all';
+        $all->{path} = $all->{file};
+        return $all;
+    }
+
+    sub _mergeMeta
+    {
+        my ($self, $meta1, $meta2) = @_;
+        my $meta = Clone::clone($meta1);
+        for (my $ix = 0; $ix <= $#{$meta2->{_order}}; $ix++)
+        {
+            my $key = $meta2->{_order}->[$ix];
+            if ($meta2->{$key})
+            {
+                if (!$meta->{$key})
+                {
+                    push(@{$meta->{_order}}, $key);
+                    push(@{$meta->{_types}}, $meta2->{_types}->[$ix]);
+                }
+                if ($meta->{$key} ne $meta2->{$key})
+                {
+                    $meta->{$key} .= ', ' . $meta2->{$key};
+                }
+            }
+        }
+        return $meta;
+    }
 };
 
 ####################################################################################################
@@ -1694,9 +1825,10 @@ else
 }
 
 __DATA__
-flipflip's AlpineQuest (https://www.alpinequest.net/) landmark files to GPX converter
+flipflip's AlpineQuest (https://www.alpinequest.net/) Landmark Files to GPX Converter
 
-This tool can read the following file formats and convert them to GPX and JSON files:
+This tool can read the following AlpineQuest for Android version 2.0.6 file formats and convert them
+to GPX and JSON files:
 
  - WPT: waypoint file (.wpt files)
  - SET: set (of waypoints) file (.set files)
@@ -1715,6 +1847,7 @@ Where:
    -j       generate JSON output (add second -j for pretty-printing the JSON data)
    -g       generate GPX output (add second -g for pretty-printing the JSON data)
    -b       write LDK contents to individual files (only for .ldk input files)
+   -m       merge all input files into a single output file instead of individual files
    -f       overwrite already existing (.json, .gpx) files
    -o ...   output base name (default input file path and base name) or '-' for standard output
    <file>   one or more landmark files (see above)
@@ -1741,6 +1874,13 @@ Examples:
 
        apq2gpx -g foo.ldk
 
+   Merge data from several files into foobar_merged.json and foobar_merged.gpx files:
+
+       apq2gpx -g -g -j -j - foobar_ -m waypoints.set route1.rte track1.trk track2.trk
+
 Notes:
 
 - Binary data (in JSON) output is base64 encoded.
+- Data from earlier or later versions of AlpineQuest may or may not work. YMMV.
+
+
