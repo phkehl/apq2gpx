@@ -1845,7 +1845,7 @@ Where:
 
    -v / -q  increases / decrease verbosity
    -j       generate JSON output (add second -j for pretty-printing the JSON data)
-   -g       generate GPX output (add second -g for pretty-printing the JSON data)
+   -g       generate GPX output (add second -g for pretty-printing the XML/GPX data)
    -b       write LDK contents to individual files (only for .ldk input files)
    -m       merge all input files into a single output file instead of individual files
    -f       overwrite already existing (.json, .gpx) files
