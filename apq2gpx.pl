@@ -885,17 +885,17 @@ package ApqFile
         {
             my $size = $self->_getval('int');
             $raw = substr($self->{rawdata}, $self->{rawoffs}, $size);
-            $value = $raw;
+            $value = MIME::Base64::encode_base64($raw, '');
             $self->{rawoffs} += $size;
         }
-        elsif ($type eq 'raw') # raw binary data
+        elsif ($type eq 'raw') # raw binary data of given size
         {
             my $size = $arg;
             $raw = substr($self->{rawdata}, $self->{rawoffs}, $size);
-            $value = $raw;
+            $value = MIME::Base64::encode_base64($raw, '');
             $self->{rawoffs} += $size;
         }
-        elsif ($type eq 'string') # string
+        elsif ($type eq 'string') # string of given length
         {
             my $size = $arg;
             $raw = substr($self->{rawdata}, $self->{rawoffs}, $size);
@@ -1837,6 +1837,8 @@ to GPX and JSON files:
  - TRK: track (a.k.a. path) file (.trk files)
  - LDK: landmark (container) file (.ldk files)
 
+Note that data from earlier or later version of the app may or may not work. YMMV.
+
 Usage:
 
    apq2gpx.pl [-v] [-q] [-j] [-g] [-b] [-f] <file> ...
@@ -1844,7 +1846,8 @@ Usage:
 Where:
 
    -v / -q  increases / decrease verbosity
-   -j       generate JSON output (add second -j for pretty-printing the JSON data)
+   -j       generate JSON output (add second -j for pretty-printing the JSON data),
+            note that any binary data in JSON output is base64 encoded
    -g       generate GPX output (add second -g for pretty-printing the XML/GPX data)
    -b       write LDK contents to individual files (only for .ldk input files)
    -m       merge all input files into a single output file instead of individual files
@@ -1878,9 +1881,5 @@ Examples:
 
        apq2gpx -g -g -j -j - foobar_ -m waypoints.set route1.rte track1.trk track2.trk
 
-Notes:
-
-- Binary data (in JSON) output is base64 encoded.
-- Data from earlier or later versions of AlpineQuest may or may not work. YMMV.
 
 
