@@ -179,6 +179,38 @@ package Base
         my @c2 = caller(3);
         return $level ? "$c2[3]() @ $c1[1]:$c1[2]" : "$c2[3]()";
     }
+
+    sub _loadraw
+    {
+        my ($self, $path) = @_;
+
+        if (!defined $path || ! -r $path)
+        {
+            $self->WARNING("Cannot read '%s'!", $path);
+            return undef;
+        }
+        my $fh;
+        unless (open($fh, '<:raw', $path))
+        {
+            $self->WARNING("Failed reading '%s': %s", $path, $!);
+            return 0;
+        }
+        my $size = -s $path;
+        my $raw;
+        read($fh, $raw, $size);
+        close($fh);
+        my $rawsize = length($raw);
+
+        $self->TRACE("Read '%s': %d/%d bytes.", $path, $rawsize, $size);
+        if ($rawsize != $size)
+        {
+            $self->WARNING("Failed reading '%s': filesize %d != raw size %d!",
+                           $path, $rawsize);
+            return undef;
+        }
+
+        return $raw;
+    }
 };
 
 
@@ -789,38 +821,6 @@ package ApqFile
         }
 
         return $data;
-    }
-
-    sub _loadraw
-    {
-        my ($self, $path) = @_;
-
-        if (!defined $path || ! -r $path)
-        {
-            $self->WARNING("Cannot read '%s'!", $path);
-            return undef;
-        }
-        my $fh;
-        unless (open($fh, '<:raw', $path))
-        {
-            $self->WARNING("Failed reading '%s': %s", $path, $!);
-            return 0;
-        }
-        my $size = -s $path;
-        my $raw;
-        read($fh, $raw, $size);
-        close($fh);
-        my $rawsize = length($raw);
-
-        $self->TRACE("Read '%s': %d/%d bytes.", $path, $rawsize, $size);
-        if ($rawsize != $size)
-        {
-            $self->WARNING("Failed reading '%s': filesize %d != raw size %d!",
-                           $path, $rawsize);
-            return undef;
-        }
-
-        return $raw;
     }
 
     sub _tell
@@ -1879,7 +1879,7 @@ Examples:
 
    Merge data from several files into foobar_merged.json and foobar_merged.gpx files:
 
-       apq2gpx -g -g -j -j - foobar_ -m waypoints.set route1.rte track1.trk track2.trk
+       apq2gpx -g -g -j -j -o foobar_ -m waypoints.set route1.rte track1.trk track2.trk
 
 
 
