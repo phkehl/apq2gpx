@@ -843,7 +843,7 @@ package ApqFile
     sub _getval
     {
         my ($self, $type, $arg) = @_;
-        # FIXME: more error handling
+        # FIXME: more error handling (e.g. not enough raw data left)
         if ($self->{rawoffs} >= $self->{rawsize})
         {
             $self->DEBUG("No more '%s' data at offset 0x%04x/0x%04x!", $type, $self->{rawoffs}, $self->{rawsize});
@@ -1218,18 +1218,23 @@ package ApqFile
         # - int         number of locations
         # - {Location}*
         # {Segment} version 2
-        # - int         unknown (not documented in spec), always 0x00000000 (0) it seems
-        # - int         unknown (not documented in spec), always 0xffffffff (-1) it seems
+        # - {Metadata} (version 2)
         # - int         number of locations
         # - {Location}*
 
         my @locations = ();
 
-        my $unknown1 = $self->_getval('int');
-        my $unknown2 = $self->_getval('int') if ($segmentVersion >= 2);
+        if ($segmentVersion < 2)
+        {
+            $self->_getval('int');
+        }
+        else
+        {
+            my $meta = $self->_getMetadata(2);
+        }
+
         my $nLocations = $self->_getval('int') // return undef;
-        $self->DEBUG('unknown1=%s unknown2=%s nLocations=%s segmentVersion=%s',
-                     $unknown1, $unknown2, $nLocations, $segmentVersion);
+        $self->DEBUG('nLocations=%s segmentVersion=%s', $nLocations, $segmentVersion);
 
         for (my $ix = 0; $ix < $nLocations; $ix++)
         {
@@ -1325,7 +1330,7 @@ package App
             if (!$apq)
             {
                 $errors++;
-                continue;
+                next;
             }
 
             my @datas = ();
