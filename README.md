@@ -49,3 +49,8 @@ perl apq2gpx.pl -h
 ```
 
 Happy hacking!
+
+## See also
+
+- https://github.com/jachetto/alp2gpx
+
