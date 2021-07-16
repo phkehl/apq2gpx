@@ -1,21 +1,21 @@
 #!/usr/bin/perl
 #
-# flipflip's AlpineQuest (https://www.alpinequest.net/) Landmark Files to GPX Converter (apq2gpx)
+# flipflip's AlpineQuest (https://www.alpinequest.net/) tools
 #
-# Copyright (c) 2017 Philippe Kehl <flipflip at oinkzwurgl dot org>
-
-# apq2gpx is free software: you can redistribute it and/or modify it under the terms of the GNU
+# Copyright (c) 2017-2021 Philippe Kehl <flipflip at oinkzwurgl dot org>
+#
+# apqtool is free software: you can redistribute it and/or modify it under the terms of the GNU
 # General Public License as published by the Free Software Foundation, either version 3 of the
 # License, or (at your option) any later version.
 #
-# apq2gpx is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even
+# apqtool is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even
 # the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General
 # Public License for more details.
 #
 # You should have received a copy of the GNU General Public License along with apq2gpx. If not, see
 # <http://www.gnu.org/licenses/>.
 #
-# See the __DATA__ section at the end of the file for usage instructions.
+# See the __DATA__ section at the end of the file or call with '-h' for usage instructions.
 #
 # References:
 # - https://www.alpinequest.net/en/help/v2/landmarks
@@ -26,7 +26,6 @@ use strict;
 use warnings;
 use utf8;
 
-
 ####################################################################################################
 # base class
 
@@ -36,10 +35,9 @@ package Base
 
     sub new
     {
-        my $class = shift;
-        my %args = @_;
+        my ($class, %opts) = @_;
         my $self = { verbosity => 0, colours => undef };
-        @{$self}{keys %args} = values %args;
+        @{$self}{keys %opts} = values %opts;
 
         # enable colours if we're printing to an interactive terminal
         if (!defined $self->{colours})
@@ -73,34 +71,33 @@ package Base
     # debug printing methods
     sub ERROR
     {
-        my $self = shift;
-        return $self->{verbosity} >= -2 ? $self->_PRINT('E', @_) : 1;
+        my ($self, @args) = @_;
+        return $self->{verbosity} >= -2 ? $self->_PRINT('E', @args) : 1;
     }
     sub WARNING
     {
-        my $self = shift;
-        return $self->{verbosity} >= -1 ? $self->_PRINT('W', @_) : 1;
+        my ($self, @args) = @_;
+        return $self->{verbosity} >= -1 ? $self->_PRINT('W', @args) : 1;
     }
     sub PRINT
     {
-        my $self = shift;
-        return $self->{verbosity} >= 0 ? $self->_PRINT('P', @_) : 1;
+        my ($self, @args) = @_;
+        return $self->{verbosity} >= 0 ? $self->_PRINT('P', @args) : 1;
     }
     sub DEBUG
     {
-        my $self = shift;
-        return $self->{verbosity} >= 1 ? $self->_PRINT('D', @_) : 1;
+        my ($self, @args) = @_;
+        return $self->{verbosity} >= 1 ? $self->_PRINT('D', @args) : 1;
     }
     sub TRACE
     {
-        my $self = shift;
-        return $self->{verbosity} >= 2 ? $self->_PRINT('T', @_) : 1;
+        my ($self, @args) = @_;
+        return $self->{verbosity} >= 2 ? $self->_PRINT('T', @args) : 1;
     }
     sub _PRINT
     {
-        my $self = shift;
-        my $type = shift;
-        my @args = map
+        my ($self, $type, @args) = @_;
+        @args = map
         {
             my $str = $_;
             if (!defined $str) { $str = '<undef>'; }
@@ -114,7 +111,7 @@ package Base
             }
             #$str =~ s/([^[:print:]\r\n])/"\\x" . sprintf('%02x', ord($1)) . "x"/ge;
             $str
-        } @_;
+        } @args;
         my $fmt = shift(@args);
 
 
@@ -225,8 +222,8 @@ package ApqFile
 
     sub new
     {
-        my $class = shift;
-        my $self = $class->SUPER::new(@_);
+        my ($class, %opts) = @_;
+        my $self = $class->SUPER::new(%opts);
 
         # new(path => ...)
         if ($self->{path})
@@ -265,10 +262,14 @@ package ApqFile
 
         $self->{rawsize} = length($self->{rawdata});
         $self->{rawoffs} = 0;
-        $self->TRACE_HEXDUMP($self->{rawdata});
+        if ($self->{verbosity} >= 3)
+        {
+            $self->TRACE_HEXDUMP($self->{rawdata});
+        }
 
         my $res = 0;
         $self->{data} = {};
+        $self->{version} = 0;
         if    ($self->{type} eq 'wpt') { $res = $self->_parseWpt(); }
         elsif ($self->{type} eq 'set') { $res = $self->_parseSet(); }
         elsif ($self->{type} eq 'rte') { $res = $self->_parseRte(); }
@@ -343,22 +344,22 @@ package ApqFile
     sub _parseWpt
     {
         my ($self) = @_;
-        # version 2
+        # legacy version 2, new version 1 (+100)
         # - int        file version
         # - int        header size (size of data to before {Waypoint})
         # - {Waypoint}
-        #   - {Metadata} (version 2)
+        #   - {Metadata}
         #   - {Location}
 
         # header
-        my ($fileVersion, $headerSize) = $self->_checkHeader(2);
+        my $headerSize = $self->_checkHeader(2, 101);
         return 0 unless (defined $headerSize);
 
         # skip header (it may or may not be present)
         $self->_seek( $self->_tell() + $headerSize );
 
         # meta data
-        $self->{meta} = $self->_getMetadata(2);
+        $self->{meta} = $self->_getMetadata();
 
         # location
         $self->{location} = $self->_getLocation();
@@ -370,7 +371,7 @@ package ApqFile
     {
         my ($self) = @_;
 
-        # version 2
+        # legacy version 2
         # - int         file version
         # - int         header size (size of data to before {Metadata})
         # - int         number of waypoints
@@ -378,21 +379,33 @@ package ApqFile
         # - coordinate  latitude of first waypoint
         # - {Metadata}  (version 2)
         # - {Waypoints}
+        # new version 1
+        # - int         file version
+        # - int         header size (size of data to before {Waypoints})
+        # - {Metadata}  technical metadata
+        # - {Metadata}  user metadata
+        # - {Waypoints}
 
         # header
-        my ($fileVersion, $headerSize) = $self->_checkHeader(2);
+        my $headerSize = $self->_checkHeader(2, 101);
         return 0 unless (defined $headerSize);
 
         # skip header (it may or may not be present)
-        $self->_seek( $self->_tell() + $headerSize );
+        if ($self->{version} < 100)
+        {
+            $self->_seek( $self->_tell() + $headerSize );
+        }
 
-        my $metadataVersion = 2;
-
-        # metadata
-        $self->{meta} = $self->_getMetadata($metadataVersion);
+        # new files technical metadata are not interesting, discard those
+        if ($self->{version} > 100)
+        {
+            $self->_getMetadata();
+        }
+        # get traditional or user meta data
+        $self->{meta} = $self->_getMetadata();
 
         # waypoints
-        $self->{waypoints} = $self->_getWaypoints($metadataVersion);
+        $self->{waypoints} = $self->_getWaypoints();
 
         return $self->{meta} && $self->{waypoints} ? 1 : 0;
     }
@@ -401,7 +414,7 @@ package ApqFile
     {
         my ($self) = @_;
 
-        # version 2
+        # legacy version 2
         # - int         file version
         # - int         header size (size of data to before {Metadata})
         # - int         number of waypoints
@@ -414,21 +427,33 @@ package ApqFile
         # - long        total route time (in s)
         # - {Metadata}  (version 2)
         # - {Waypoints}
+        # new version 1
+        # - int         file version
+        # - int         header size (size of data to before {Waypoints})
+        # - {Metadata}  technical metadata
+        # - {Metadata}  user metadata
+        # - {Waypoints}
 
         # header
-        my ($fileVersion, $headerSize) = $self->_checkHeader(2);
+        my $headerSize = $self->_checkHeader(2, 101);
         return 0 unless (defined $headerSize);
 
         # skip header (it may or may not be present)
-        $self->_seek( $self->_tell() + $headerSize );
+        if ($self->{version} < 100)
+        {
+            $self->_seek( $self->_tell() + $headerSize );
+        }
 
-        my $metadataVersion = 2;
-
-        # metadata
-        $self->{meta} = $self->_getMetadata($metadataVersion);
+        # new files technical metadata are not interesting, discard those
+        if ($self->{version} > 100)
+        {
+            $self->_getMetadata();
+        }
+        # get traditional or user meta data
+        $self->{meta} = $self->_getMetadata();
 
         # waypoints
-        $self->{waypoints} = $self->_getWaypoints($metadataVersion);
+        $self->{waypoints} = $self->_getWaypoints();
 
         return $self->{meta} && $self->{waypoints} ? 1 : 0;
     }
@@ -437,7 +462,7 @@ package ApqFile
     {
         my ($self) = @_;
 
-        # version 2
+        # legacy version 2
         # - int         file version
         # - int         header size (size of data to before {Metadata})
         # - int         number of locations
@@ -449,7 +474,7 @@ package ApqFile
         # - {Locations}
 
         # header
-        my ($fileVersion, $headerSize) = $self->_checkHeader(2);
+        my $headerSize = $self->_checkHeader(2);
         return 0 unless (defined $headerSize);
 
         # skip header (it may or may not be present)
@@ -458,7 +483,7 @@ package ApqFile
         my $metadataVersion = 2;
 
         # metadata
-        $self->{meta} = $self->_getMetadata($metadataVersion);
+        $self->{meta} = $self->_getMetadata();
 
         # locations
         $self->{locations} = $self->_getLocations();
@@ -470,7 +495,7 @@ package ApqFile
     {
         my ($self) = @_;
 
-        # version 3 (version 2 is the same but uses a different {Metadata} and {Segments} struct
+        # legacy version 3 (version 2 is the same but uses a different {Metadata} and {Segments} struct
         # - int         file version
         # - int         header size (size of data to before {Metadata}
         # - int         number of locations
@@ -486,28 +511,38 @@ package ApqFile
         # - {Metadata}  (version 2)
         # - {Waypoints}
         # - {Segments}  (version 2)
-
-        # version 2 is the same but version 1 {Metadata} and {Segment} structs
+        # legacy version 2 is the same but version 1 {Metadata} and {Segment} structs
+        # - ...
+        # new version 1 (+100)
+        # - int               header size (bytes before {Waypoints})
+        # - {Metadata}        technical metadata
+        # - {Metadata}        user metadata
+        # - {Waypoints}       waypoints
+        # - {TrackSegments}   segments
 
         # header
-        my ($fileVersion, $headerSize) = $self->_checkHeader(2, 3);
+        my $headerSize = $self->_checkHeader(2, 3, 101);
         return 0 unless (defined $headerSize);
 
         # skip header (it may or may not be present)
-        $self->_seek( $self->_tell() + $headerSize );
+        if ($self->{version} < 100)
+        {
+            $self->_seek( $self->_tell() + $headerSize );
+        }
 
-        my $metadataVersion = $fileVersion == 3 ? 2 : 1;
-        my $segmentVersion  = $fileVersion == 3 ? 2 : 1;
-        $self->DEBUG('fileVersion=%s metadataVersion=%s segmentVersion=%s',
-                     $fileVersion, $metadataVersion, $segmentVersion);
-        # metadata
-        $self->{meta} = $self->_getMetadata($metadataVersion);
+        # new files technical metadata are not interesting, discard those
+        if ($self->{version} > 100)
+        {
+            $self->_getMetadata();
+        }
+        # get traditional or user meta data
+        $self->{meta} = $self->_getMetadata();
 
         # waypoints
-        $self->{waypoints} = $self->_getWaypoints($metadataVersion);
+        $self->{waypoints} = $self->_getWaypoints();
 
         # segments
-        $self->{segments} = $self->_getSegments($segmentVersion);
+        $self->{segments} = $self->_getSegments();
 
         return $self->{meta} && $self->{waypoints} && $self->{segments} ? 1 : 0;
     }
@@ -591,7 +626,7 @@ package ApqFile
         # FIXME: it's 0x20 later it seems
         my $offs = $self->_tell();
         $self->_seek($hdr->{metaOffset} + 0x20);
-        my $meta = $self->_getMetadata(2); # version 2 metadata
+        my $meta = $self->_getMetadata();
         $self->_seek($offs);
 
         # root node?
@@ -863,6 +898,12 @@ package ApqFile
             $value = unpack('c', $raw);
             $self->{rawoffs} += 1;
         }
+        elsif ($type eq 'byte') # 1 byte
+        {
+            $raw = substr($self->{rawdata}, $self->{rawoffs}, 1);
+            $value = unpack('c', $raw);
+            $self->{rawoffs} += 1;
+        }
         elsif ($type eq 'long') # 8 bytes, big-endian, signed
         {
             $raw = substr($self->{rawdata}, $self->{rawoffs}, 8);
@@ -881,18 +922,25 @@ package ApqFile
             $value = unpack('d>', $raw);
             $self->{rawoffs} += 8;
         }
-        elsif ($type eq 'int+raw') # size int + raw data
+        elsif ($type eq 'int+raw') # size int + "raw" data
         {
             my $size = $self->_getval('int');
             $raw = substr($self->{rawdata}, $self->{rawoffs}, $size);
             $value = MIME::Base64::encode_base64($raw, '');
             $self->{rawoffs} += $size;
         }
-        elsif ($type eq 'raw') # raw binary data of given size
+        elsif ($type eq 'raw') # "raw" binary data of given size
         {
             my $size = $arg;
             $raw = substr($self->{rawdata}, $self->{rawoffs}, $size);
             $value = MIME::Base64::encode_base64($raw, '');
+            $self->{rawoffs} += $size;
+        }
+        elsif ($type eq 'bin') # binary data of given size
+        {
+            my $size = $arg;
+            $raw = substr($self->{rawdata}, $self->{rawoffs}, $size);
+            $value = $raw;
             $self->{rawoffs} += $size;
         }
         elsif ($type eq 'string') # string of given length
@@ -907,7 +955,7 @@ package ApqFile
             $value = $self->_getval('int');
             $value *= 1e-7;
         }
-        elsif ($type eq 'height') # int, scale 1e-7
+        elsif ($type eq 'height') # int, scale 1e-3
         {
             $value = $self->_getval('int');
             if ($value == -999999999)
@@ -931,12 +979,24 @@ package ApqFile
                 $value *= 1e-3;
             }
         }
-        elsif ($type eq 'accuracy') # int, scale 1e-7
+        elsif ($type eq 'accuracy') # int [m]
         {
             $value = $self->_getval('int');
             if ($value == 0)
             {
                 $value = undef;
+            }
+        }
+        elsif ($type eq 'accuracy2') # int, scale 1e-2 [m]
+        {
+            $value = $self->_getval('int');
+            if ($value == 0)
+            {
+                $value = undef;
+            }
+            else
+            {
+                $value *= 1e-2;
             }
         }
         elsif ($type eq 'pressure') # int, scale 1e-3
@@ -963,11 +1023,20 @@ package ApqFile
         {
             $self->TRACE('%-10s at 0x%04x (%04d) [%02d] %s = %s', $type, $oldRawoffs, $oldRawoffs, $size,
                          join(' ', map { sprintf('%02x', $_) } unpack('C*', substr($self->{rawdata}, $oldRawoffs, $size))),
-                         $type =~ m{raw} ? '<...>' : $value);
+                         $type =~ m{raw|bin} ? '<...>' : $value);
         }
 
         return $value;
     }
+
+    # sub _peekval
+    # {
+    #     my ($self, $type, $arg) = @_;
+    #     my $rawoffs = $self->{rawoffs};
+    #     my $val = $self->_getval($type, $arg);
+    #     $self->{rawoffs} = $rawoffs;
+    #     return $val;
+    # }
 
     sub _getvalmulti
     {
@@ -988,20 +1057,27 @@ package ApqFile
     {
         my ($self, @expectedFileVersions) = @_;
         my $fileVersion = $self->_getval('int');
+        # New files magic, get version number and offset by 100, otherwise it's a legacy file version
+        if ( ($fileVersion & 0x50500000) == 0x50500000 )
+        {
+            $fileVersion = ($fileVersion & 0xff) + 100;
+        }
+
         my $headerSize  = $self->_getval('int');
         $self->DEBUG('fileVersion=%s headerSize=%s', $fileVersion, $headerSize);
         my %okayFileVersions = map { $_, 1 } @expectedFileVersions;
         if (!defined $fileVersion || !$okayFileVersions{$fileVersion})
         {
             $self->WARNING('Unknown file version %s (expected %s).', $fileVersion, join(' or ', @expectedFileVersions));
-            return (undef, undef);
+            return undef;
         }
-        return ($fileVersion, $headerSize);
+        $self->{version} = $fileVersion;
+        return $headerSize;
     }
 
     sub _getMetadata
     {
-        my ($self, $metadataVersion) = @_;
+        my ($self, $meta) = @_;
 
         # This is what the specs say:
         #
@@ -1035,13 +1111,42 @@ package ApqFile
         # - {MetadataContentExt}
         #   - int    number of {MetadataContentExt} -- always -1 it seems
         #   - {MetadataContentExt}
-        #     - string             name of extension, FIXME: nul terminated?
+        #     - string             name of extension, FIXME: probably also int length + string bytes
         #     - {MetadataContent}  same as above?!
+        #
+        # Modern files
+        # - {MetadataContent}
+        #   - int   number of metadata entries, or -1 if none
+        #   - {MetadataContentEntry}
+        #     - int     length of name string
+        #     - string  name string
+        #     - int     type of entry (see above)
+        #     - *       data
+        #   - [int]   metadata version, only is number if metadata entries >= 0
+        # - [MetadataExtensions]
+        #   - int    number of {MetadataContentExt} -- always -1 it seems
+        #   - {MetadataContentExt}
+        #     - string             name of extension, FIXME: probably also int length + string bytes
+        #     - {MetadataContent}  same as above?!
+
+        my $metadataVersion = 1;
+        if ($self->{version} > 100)
+        {
+            $metadataVersion = 3;
+        }
+        elsif ($self->{type} eq 'trk')
+        {
+            $metadataVersion = $self->{version} == 3 ? 2 : 1;
+        }
+        else
+        {
+            $metadataVersion = $self->{version} == 2 ? 2 : 1;
+        }
 
         my $nMetaEntries = $self->_getval('int');
         $self->DEBUG('nMetaEntries=%d metadataVersion=%s', $nMetaEntries, $metadataVersion);
 
-        my $meta = { _order => [], _types => [] };
+        $meta //= { _order => [], _types => [] };
         for (my $ix = 0; $ix < $nMetaEntries; $ix++)
         {
             my $nameLen = $self->_getval('int');
@@ -1064,7 +1169,12 @@ package ApqFile
             push(@{$meta->{_types}}, $type);
         }
 
-        if ($metadataVersion == 2)
+        if ( ($metadataVersion == 3) && ($nMetaEntries >= 0) )
+        {
+            my $dummy = $self->_getval('int');
+        }
+
+        if ($metadataVersion >= 2)
         {
             my $nMetaExt = $self->_getval('int');
             $self->DEBUG('nMetaExt=%d', $nMetaExt);
@@ -1087,8 +1197,8 @@ package ApqFile
 
     sub _getLocation
     {
-        my ($self, $offset) = @_;
-        # {Location}
+        my ($self) = @_;
+        # {Location} version 1
         # - int        structure size (bytes)
         # - coordinate longitude
         # - coordinate latitude
@@ -1096,21 +1206,72 @@ package ApqFile
         # - timestamp  time
         # - [accuracy] accuracy (optional, depending on structure size)
         # - [pressure] pressure (optional, depending on structure size)
+        # {Location} version 2 (new files)
+        # - int        structure size (bytes)
+        # - coordinate longitude
+        # - coordinate latitude
+        # - {LocationValue}*
+        #   - byte      value type
+        #   - variable  value
+
+        my $locationVersion = $self->{version} > 100 ? 2 : 1;
 
         my $location = { lat => undef, lon => undef, alt => undef, ts => undef, acc => undef, bar => undef };
 
         my $size = $self->_getval('int') // return undef;
         $location->{lon} = $self->_getval('coordinate');
         $location->{lat} = $self->_getval('coordinate');
-        $location->{alt} = $self->_getval('height');
-        $location->{ts}  = $self->_getval('timestamp');
-        if ($size > 20)
+
+        if ($locationVersion == 1)
         {
-            $location->{acc} = $self->_getval('accuracy');
+            $location->{alt} = $self->_getval('height');
+            $location->{ts}  = $self->_getval('timestamp');
+            if ($size > 20)
+            {
+                $location->{acc} = $self->_getval('accuracy');
+            }
+            if ($size > 24)
+            {
+                $location->{bar} = $self->_getval('pressure');
+            }
         }
-        if ($size > 24)
+        else
         {
-            $location->{bar} = $self->_getval('pressure');
+            $size -= 4 + 4;
+            while ($size > 0)
+            {
+                my $type = $self->_getval('byte');
+                $size -= 1;
+                if ($type == 0x61)
+                {
+                    $location->{acc} = $self->_getval('accuracy2');
+                    $size -= 4;
+                }
+                elsif ($type == 0x65)
+                {
+                    $location->{alt} = $self->_getval('height');
+                    $size -= 4;
+                }
+                elsif ($type == 0x70)
+                {
+                    $location->{bar} = $self->_getval('pressure');
+                    $size -= 4;
+                }
+                elsif ($type == 0x74)
+                {
+                    $location->{ts}  = $self->_getval('timestamp');
+                    $size -= 8;
+                }
+                else
+                {
+                    last;
+                }
+            }
+            if ($size > 0)
+            {
+                $self->WARNING("Spurious data in location!");
+                $self->_seek( $self->_tell() + $size );
+            }
         }
 
         foreach (qw(lat lon alt ts acc bar))
@@ -1127,10 +1288,12 @@ package ApqFile
 
     sub _getWaypoints
     {
-        my ($self, $metadataVersion) = @_;
+        my ($self) = @_;
         # {Waypoints}
         # - int         number of waypoints
         # - {Waypoint}*
+        #   - {Metadata}
+        #   - {Location}
         my @waypoints = ();
 
         my $nWaypoints = $self->_getval('int') // return undef;
@@ -1139,7 +1302,7 @@ package ApqFile
         for (my $ix = 0; $ix < $nWaypoints; $ix++)
         {
             # meta data
-            my $meta = $self->_getMetadata($metadataVersion);
+            my $meta = $self->_getMetadata();
 
             # location
             my $location = $self->_getLocation();
@@ -1184,10 +1347,10 @@ package ApqFile
 
     sub _getSegments
     {
-        my ($self, $segmentVersion) = @_;
-        # {Segments}
+        my ($self) = @_;
+        # {Segments} / {TrackSegments}
         # - int         number of segments
-        # - {Segment}*
+        # - {Segment}* / {TrackSegment}*
 
         my @segments = ();
 
@@ -1197,7 +1360,7 @@ package ApqFile
         for (my $ix = 0; $ix < $nSegments; $ix++)
         {
             # segment
-            my $segment = $self->_getSegment($segmentVersion);
+            my $segment = $self->_getSegment();
 
             if (!$segment)
             {
@@ -1212,15 +1375,17 @@ package ApqFile
 
     sub _getSegment
     {
-        my ($self, $segmentVersion) = @_;
+        my ($self) = @_;
         # {Segment} version 1
         # - int         unknown (not documented in spec), always 0x00000000 (0) it seems
         # - int         number of locations
         # - {Location}*
         # {Segment} version 2
-        # - {Metadata} (version 2)
+        # - {Metadata}
         # - int         number of locations
         # - {Location}*
+
+        my $segmentVersion = $self->{version} >= 3 ? 2 : 1; # trk files only
 
         my @locations = ();
 
@@ -1230,7 +1395,7 @@ package ApqFile
         }
         else
         {
-            my $meta = $self->_getMetadata(2);
+            my $meta = $self->_getMetadata();
         }
 
         my $nLocations = $self->_getval('int') // return undef;
@@ -1255,11 +1420,108 @@ package ApqFile
 };
 
 ####################################################################################################
-# application
+# application base class
 
-package App
+package AppBase
 {
     use base 'Base';
+    use feature 'state';
+
+    sub run
+    {
+        my ($self, $tool) = @_;
+        $self->help('apqtool');
+        return 1;
+    }
+
+    sub help
+    {
+        my ($self, $section) = @_;
+        state @help = <main::DATA>;
+        my $inSection = 0;
+        $self->TRACE("help($section)");
+        foreach my $line (@help)
+        {
+            if ($line =~ m{^#})
+            {
+                next;
+            }
+            elsif ($line =~ m{^\\section\{$section\}})
+            {
+                $inSection = 1;
+            }
+            elsif ($inSection && ($line =~ m{^\\include\{(.+)\}}))
+            {
+                $self->help($1);
+            }
+            elsif ($line =~ m{^\\end})
+            {
+                $inSection = 0;
+            }
+            elsif ($inSection)
+            {
+                print(STDERR $line);
+            }
+        }
+        return 1;
+    }
+
+    sub _writeFile
+    {
+        my ($self, $file, $data) = @_;
+        if ($file eq '-')
+        {
+            print($data);
+            return 1;
+        }
+        else
+        {
+            my $fh;
+            if (open($fh, '>', $file))
+            {
+                binmode($fh);
+                print($fh $data);
+                close($fh);
+                return 1;
+            }
+            else
+            {
+                $self->WARNING("Failed writing: %s", $!);
+                return 0;
+            }
+        }
+    }
+
+    sub _readFile
+    {
+        my ($self, $file) = @_;
+        my $data;
+        my $fh;
+        if (open($fh, '<', $file))
+        {
+            binmode($fh);
+            do
+            {
+                local $/ = undef;
+                $data = <$fh>;
+            };
+            close($fh);
+        }
+        else
+        {
+            $self->WARNING("Failed readin: %s", $!);
+        }
+        return $data;
+    }
+
+};
+
+####################################################################################################
+# apq2gpx application
+
+package AppApqToGpx
+{
+    use base 'AppBase';
 
     use JSON::PP;
     use Geo::Gpx;
@@ -1271,9 +1533,8 @@ package App
 
     sub new
     {
-        my $class = shift;
-        my $argv = shift;
-        my $self = $class->SUPER::new(@_);
+        my ($class, $argv, %opts) = @_;
+        my $self = $class->SUPER::new(%opts);
 
         $self->{files} = [];
         $self->{dojson} = 0;
@@ -1297,7 +1558,7 @@ package App
             elsif ($arg eq '-h')
             {
                 $self->{files} = [];
-                print(STDERR $_) for (<main::DATA>);
+                $self->help('apq2gpx');
                 return $self;
             }
             else
@@ -1318,7 +1579,7 @@ package App
 
     sub run
     {
-        my $self = shift;
+        my ($self) = @_;
         $self->TRACE('run()');
 
         my $errors = 0;
@@ -1667,31 +1928,6 @@ package App
         return 1;
     }
 
-    sub _writeFile
-    {
-        my ($self, $file, $data) = @_;
-        if ($file eq '-')
-        {
-            print($data);
-            return 1;
-        }
-        else
-        {
-            my $fh;
-            if (open($fh, '>', $file))
-            {
-                print($fh $data);
-                close($fh);
-                return 1;
-            }
-            else
-            {
-                $self->WARNING("Failed writing: %s", $!);
-                return 0;
-            }
-        }
-    }
-
     sub _loadNodes
     {
         my ($self, $node, $ldkFile) = @_;
@@ -1810,6 +2046,212 @@ package App
 };
 
 ####################################################################################################
+# places2apq application
+
+package AppPlacesToApq
+{
+    use base 'AppBase';
+
+    use JSON::PP;
+
+    sub new
+    {
+        my ($class, $argv, %opts) = @_;
+        my $self = $class->SUPER::new(%opts);
+
+        $self->{setfile} = '';
+        $self->{files} = [];
+
+        while (my $arg = shift(@{$argv}))
+        {
+            if    ($arg eq '-v') { $self->{verbosity}++; }
+            elsif ($arg eq '-q') { $self->{verbosity}--; }
+            elsif ($arg eq '-s') { $self->{setfile} = shift(@{$argv}); }
+            elsif (-f $arg)      { push(@{$self->{files}}, $arg); }
+            elsif ($arg eq '-h')
+            {
+                $self->help('places2apq');
+                return $self;
+            }
+            else
+            {
+                $self->ERROR("Illegal argument '%s'!", $arg);
+                return undef;
+            }
+        }
+
+        $self->TRACE('setfile=%s files=%s', $self->{setfile}, $self->{files});
+
+        if (!$self->{setfile} || ($#{$self->{files}} < 0))
+        {
+            return undef;
+        }
+
+        return $self;
+    }
+
+    sub run
+    {
+        my ($self) = @_;
+        $self->TRACE('run()');
+
+        my $errors = 0;
+        my @locations = ();
+        foreach my $file (@{$self->{files}})
+        {
+            $self->PRINT("Loading: %s", $file);
+            my $data;
+            eval { $data = JSON::PP->new()->decode( $self->_readFile($file) ); };
+            if ($@)
+            {
+                my $e = "$@"; $e =~ s{\r?\n}{}g;
+                $self->ERROR("Error: $e");
+                $errors++;
+                next;
+            }
+            # some sanity checks..
+            unless (UNIVERSAL::isa($data, 'HASH') && $data->{type} && ($data->{type} eq 'FeatureCollection') &&
+                    $data->{features} && UNIVERSAL::isa($data->{features}, 'ARRAY'))
+            {
+                $self->ERROR('Error: file does not look like a suitable GeoJSON!');
+                $errors++;
+                next;
+            }
+
+            my $nFound = 0;
+            my $nSkipOld = 0;
+            my $nSkipNoloc = 0;
+            my $nSkipNoname = 0;
+            foreach my $feature (@{$data->{features}})
+            {
+                # mostly:
+                # {
+                #     'geometry' => { 'coordinates' => [ 'lon', 'lat' ], 'type' => 'Point'
+                #     'properties' => {
+                #         'Google Maps URL' => 'http://maps.google.com/...',
+                #         'Location' => { 'Address' => "...", 'Business Name' => "...", 'Country Code' => '..',
+                #                         'Geo Coordinates' => { 'Latitude' => '...', 'Longitude' => '...' }.
+                #         'Published' => '2012-03-25T15:01:49Z', 'Updated' => '2012-03-25T15:01:49Z'
+                #         'Title' => "..." },
+                #     'type' => 'Feature'
+                # }
+                # sometimes:
+                # {
+                #     'geometry' => { 'coordinates' => [ 'lon', 'lat' ], 'type' => 'Point'
+                #     'properties' => {
+                #         'Google Maps URL' => 'http://maps.google.com/?cid=3897277001522922387',
+                #         'Location' => { 'Latitude' => '...', 'Longitude' => '...'                             # no address
+                #         'Published' => '2012-03-16T20:22:14Z', 'Updated' => '2012-03-16T20:22:14Z'
+                #         'Review Comment' => "...", 'Star Rating' => 5 },
+                #         'Title' => '...' },
+                #     'type' => 'Feature'
+                # }
+                # and:
+                # {
+                #     'geometry' => { 'coordinates' => [ 0, 0 ], 'type' => 'Point' },                          # place no longer exists (?)
+                #     'properties' => {
+                #         'Comment' => 'No location information is available for this review',
+                #         'Google Maps URL' => '...',
+                #         'Published' => '2013-07-20T16:48:50.925Z',
+                #         'Review Comment' => "...", 'Star Rating' => 5 },
+                #     'type' => 'Feature'
+                # }
+
+                # FIXME: more sanity checking...
+                my $geometry   = $feature->{geometry};
+                my $properties = $feature->{properties};
+                my $location   = $properties->{Location};
+
+                if ( ($geometry->{coordinates}->[0] == 0) && ($geometry->{coordinates}->[1] == 0) )
+                {
+                    $self->TRACE('Skipping (old place): %s', $feature);
+                    $nSkipOld++;
+                    next;
+                }
+
+                my $loc = { type => '', uid => '', lat => 0, lon => 0, name => '', comment => '', url => '' };
+
+                if ($location->{Latitude})
+                {
+                    $loc->{lat} = $location->{Latitude};
+                    $loc->{lon} = $location->{Longitude};
+                }
+                elsif ($location->{'Geo Coordinates'})
+                {
+                    $loc->{lat} = $location->{'Geo Coordinates'}->{Latitude};
+                    $loc->{lon} = $location->{'Geo Coordinates'}->{Longitude};
+                }
+                else
+                {
+                    $self->TRACE('Skipping (no coordinates): %s', $feature);
+                    $nSkipNoloc++;
+                    next;
+                }
+
+                $loc->{uid} = sprintf('%+013.9f/%+014.9f', $loc->{lat}, $loc->{lon});
+
+                if ($location->{'Business Name'})
+                {
+                    $loc->{name} = $location->{'Business Name'};
+                }
+                elsif ($properties->{Title})
+                {
+                    $loc->{name} = $location->{Title};
+                }
+                else
+                {
+                    $self->TRACE('Skippin (no name): %s', $feature);
+                    $nSkipNoname++;
+                }
+
+                $loc->{url} = $properties->{'Google Maps URL'};
+
+                if ($location->{Address})
+                {
+                    $loc->{comment} = $location->{Address};
+                }
+
+                if ($properties->{'Review Comment'})
+                {
+                    $loc->{type} = 'review';
+                    $loc->{comment} .= ($loc->{comment} ? "\nReview: " : '') . $properties->{'Review Comment'};
+                    $loc->{name} .= ' (' . ('*' x $properties->{'Star Rating'}) . ')';
+                }
+                else
+                {
+                    $loc->{type} = 'star';
+                }
+                push(@locations, $loc);
+                $nFound++;
+            }
+            $self->PRINT("Loaded $nFound, skipped $nSkipOld old places, $nSkipNoloc places without coordinates and $nSkipNoname places without a name.");
+        }
+
+        # remove duplicates
+        my %locByUid = ();
+        foreach my $loc (@locations)
+        {
+            push(@{$locByUid{$loc->{uid}}}, $loc);
+        }
+        @locations = sort { lc($a->{name}) cmp lc($b->{name}) } map {
+
+            # prefer reviews over starred, keep only first
+            (
+             grep { $_->{type} eq 'review' } @{$locByUid{$_}},
+             grep { $_->{type} eq 'star'   } @{$locByUid{$_}}
+            )[0]
+
+        } keys %locByUid;
+
+        $self->PRINT("Have now %d locations.", $#locations + 1);
+        $self->TRACE(\@locations);
+
+        return $errors ? 0 : 1;
+    }
+
+};
+
+####################################################################################################
 # instantiate application and run it
 
 package main;
@@ -1817,7 +2259,15 @@ package main;
 use strict;
 use warnings;
 
-my $app = App->new([ @ARGV ]);
+my $app;
+my $tool = '';
+if    ($0 =~ m{\bapq2gpx\b})    { $tool = 'apq2gpx'; }
+elsif ($0 =~ m{\bplaces2apq\b}) { $tool = 'places2apq'; }
+elsif ($#ARGV > -1)             { $tool = shift(@ARGV); }
+
+if    ($tool eq '-h')         { $app = AppBase->new(); }
+elsif ($tool eq 'apq2gpx')    { $app = AppApqToGpx->new(\@ARGV); }
+elsif ($tool eq 'places2apq') { $app = AppPlacesToApq->new(\@ARGV); }
 
 if ($app && $app->run())
 {
@@ -1830,23 +2280,73 @@ else
 }
 
 __DATA__
-flipflip's AlpineQuest (https://www.alpinequest.net/) Landmark Files to GPX Converter
+"
+####################################################################################################
+\section{header}
+#
+flipflip's AlpineQuest (https://www.alpinequest.net/) Tools
+\end
+#
+#
+####################################################################################################
+\section{copyright}
+#
+Copyright (c) 2017-2021 Philippe Kehl <flipflip at oinkzwurgl dot org>
+See source code for details.
+\end
+#
+#
+####################################################################################################
+\section{apqtool}
+\include{header}
 
-This tool can read the following AlpineQuest for Android version 2.0.6 file formats and convert them
+\include{copyright}
+
+Usage:
+
+    apqtools.pl <tool> [args..]
+
+Where <tool> is one of:
+
+    apq2gpx    -- AlpineQuest files to GPX converter
+    places2apq -- Google Maps 'your places' to AlpineQuest set (of waypoints) file
+
+Use -h to get more help. For example:
+
+    apqtools.pl apq2gpx -h
+
+Alternatively, symlink apqtools.pl to <tool>.pl to run the command directly. For example:
+
+    ln -s apqtools.pl apq2gpx.pl
+    apq2gpx.pl -h
+
+\end
+#
+#
+####################################################################################################
+\section{apq2gpx}
+
+\include{header}
+
+\include{copyright}
+
+apq2gpx -- AplineQuest files to GPX converter
+
+This tool can read the following AlpineQuest for Android version 2.2.8 file formats and convert them
 to GPX and JSON files:
 
  - WPT: waypoint file (.wpt files)
  - SET: set (of waypoints) file (.set files)
  - RTE: route file (.rte files)
- - ARE: area file (.are files)
+ - ARE: area file (.are files) -- only old simple versions are supported
  - TRK: track (a.k.a. path) file (.trk files)
- - LDK: landmark (container) file (.ldk files)
+ - LDK: landmark (container) file (.ldk files) -- limited and experimental support
 
 Note that data from earlier or later version of the app may or may not work. YMMV.
 
 Usage:
 
-   apq2gpx.pl [-v] [-q] [-j] [-g] [-b] [-f] <file> ...
+   apqtools.pl apq2gpx [-v] [-q] [-j] [-g] [-b] [-f] <file> ...
 
 Where:
 
@@ -1858,7 +2358,7 @@ Where:
    -m       merge all input files into a single output file instead of individual files
    -f       overwrite already existing (.json, .gpx) files
    -o ...   output base name (default input file path and base name) or '-' for standard output
-   <file>   one or more landmark files (see above)
+   <file>   one or more input files (see above)
 
 Examples:
 
@@ -1886,5 +2386,32 @@ Examples:
 
        apq2gpx -g -g -j -j -o foobar_ -m waypoints.set route1.rte track1.trk track2.trk
 
+\end
+#
+#
+####################################################################################################
+\section{places2apq}
 
+\include{header}
 
+\include{copyright}
+
+places2apq -- Google Maps 'your places' to AlpineQuest set (of waypoints) file
+
+This tool can read the GeoJSON files from Google Maps (your places) Takout and convert the locations
+to an AlpineQuest set (of waypoints) (.SET) file.
+
+To obtain your Google Maps starred location go to https://takeout.google.com/, deselect all options
+and select the 'Maps (your places)' data. You will get a .zip file that contains GeoJSON files with
+your starred locations ('Saved Places.json') and your reviews ('Reviews.json').
+
+Then call:
+
+   apqtools.pl places2apq [-v] [-q] ...
+
+Where:
+
+   -v / -q  increases / decrease verbosity
+
+\end
+####################################################################################################
