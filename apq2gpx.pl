@@ -219,6 +219,7 @@ package ApqFile
     use base 'Base';
 
     use MIME::Base64;
+    use Encode;
 
     sub new
     {
@@ -947,6 +948,7 @@ package ApqFile
         {
             my $size = $arg;
             $raw = substr($self->{rawdata}, $self->{rawoffs}, $size);
+            $raw = Encode::decode('UTF-8', $raw, Encode::FB_QUIET);
             $value = $raw;
             $self->{rawoffs} += $size;
         }
