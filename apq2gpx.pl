@@ -2,7 +2,7 @@
 #
 # flipflip's AlpineQuest (https://www.alpinequest.net/) tools
 #
-# Copyright (c) 2017-2021 Philippe Kehl <flipflip at oinkzwurgl dot org>
+# Copyright (c) 2017-2022 Philippe Kehl <flipflip at oinkzwurgl dot org>
 #
 # apqtool is free software: you can redistribute it and/or modify it under the terms of the GNU
 # General Public License as published by the Free Software Foundation, either version 3 of the
@@ -20,7 +20,8 @@
 # References:
 # - https://www.alpinequest.net/en/help/v2/landmarks
 # - https://www.alpinequest.net/forum/viewtopic.php?f=3&t=3319
-#
+# - https://www.alpinequest.net/forum/viewtopic.php?f=4&t=5045
+# - https://psyberia.net/res/specs/psyberia_landmarks_files_specs.pdf
 
 use strict;
 use warnings;
@@ -1218,7 +1219,9 @@ package ApqFile
 
         my $locationVersion = $self->{version} > 100 ? 2 : 1;
 
-        my $location = { lat => undef, lon => undef, alt => undef, ts => undef, acc => undef, bar => undef };
+        my $location = { lat => undef, lon => undef, alt => undef, ts => undef, acc => undef, bar => undef,
+             batt => undef, cell => { gen => undef, prot => undef, sig => undef },
+             numsv => { tot => undef, unkn => undef, G => undef, S => undef, R => undef, J => undef, C => undef, E => undef, I => undef} };
 
         my $size = $self->_getval('int') // return undef;
         $location->{lon} = $self->_getval('coordinate');
@@ -1264,14 +1267,44 @@ package ApqFile
                     $location->{ts}  = $self->_getval('timestamp');
                     $size -= 8;
                 }
+                elsif ($type == 0x62)
+                {
+                    $location->{batt} = $self->_getval('byte');
+                    $size -= 1;
+                }
+                elsif ($type == 0x6e)
+                {
+                    my $gen_prot = $self->_getval('byte');
+                    $location->{cell}->{gen}  = int($gen_prot / 10);
+                    $location->{cell}->{prot} = $gen_prot % 10;
+                    $location->{cell}->{sig}  = $self->_getval('byte');
+                    $size -= 2;
+                }
+                elsif ($type == 0x73)
+                {
+                    $location->{numsv}->{unkn} = $self->_getval('byte');
+                    $location->{numsv}->{G}    = $self->_getval('byte');
+                    $location->{numsv}->{S}    = $self->_getval('byte');
+                    $location->{numsv}->{R}    = $self->_getval('byte');
+                    $location->{numsv}->{J}    = $self->_getval('byte');
+                    $location->{numsv}->{C}    = $self->_getval('byte');
+                    $location->{numsv}->{E}    = $self->_getval('byte');
+                    $location->{numsv}->{I}    = $self->_getval('byte');
+                    $location->{numsv}->{tot} += $location->{numsv}->{$_} for(qw(unkn G S R J C E I));
+                    $size -= 8;
+                }
                 else
                 {
+                    # put back type byte
+                    $self->_seek($self->_tell() - 1);
+                    $size += 1;
                     last;
                 }
             }
             if ($size > 0)
             {
-                $self->WARNING("Spurious data in location!");
+                $self->WARNING("Spurious data (size=$size) in location!");
+                $self->TRACE_HEXDUMP(substr($self->{rawdata}, $self->_tell(), $size));
                 $self->_seek( $self->_tell() + $size );
             }
         }
@@ -1862,8 +1895,18 @@ package AppApqToGpx
         $wpt->{sym}  = $meta->{sym}     if ($meta && $meta->{icon});   # better use "type" field?
         $wpt->{name} = $meta->{name}    if ($meta && $meta->{name});
         $wpt->{desc} = $meta->{comment} if ($meta && $meta->{comment});
-        # FIXME: isn't there a <cmt/> field in GPX?
-        # acc?, bar?
+        if ($location->{numsv}->{tot})
+        {
+            $wpt->{sat} = $location->{numsv}->{tot};
+        }
+        my @cmt = ();
+        push(@cmt, "acc=$location->{acc}") if ($location->{acc});
+        push(@cmt, "bar=$location->{bar}") if ($location->{bar});
+        push(@cmt, "batt=$location->{batt}") if ($location->{batt});
+        if ($#cmt > -1)
+        {
+            $wpt->{cmt} = join(', ', @cmt);
+        }
         return $wpt;
     }
 
@@ -2293,7 +2336,7 @@ flipflip's AlpineQuest (https://www.alpinequest.net/) Tools
 ####################################################################################################
 \section{copyright}
 #
-Copyright (c) 2017-2021 Philippe Kehl <flipflip at oinkzwurgl dot org>
+Copyright (c) 2017-2022 Philippe Kehl <flipflip at oinkzwurgl dot org>
 See source code for details.
 \end
 #
