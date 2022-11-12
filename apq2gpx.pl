@@ -1293,6 +1293,11 @@ package ApqFile
                     $location->{numsv}->{tot} += $location->{numsv}->{$_} for(qw(unkn G S R J C E I));
                     $size -= 8;
                 }
+                elsif ($type == 0x76)
+                {
+                    $location->{acc_v} = $self->_getval('accuracy2');
+                    $size -= 4;
+                }
                 else
                 {
                     # put back type byte
@@ -1303,7 +1308,7 @@ package ApqFile
             }
             if ($size > 0)
             {
-                $self->WARNING("Spurious data (size=$size) in location!");
+                $self->WARNING("Ignoring spurious data (size=$size) in location!");
                 $self->TRACE_HEXDUMP(substr($self->{rawdata}, $self->_tell(), $size));
                 $self->_seek( $self->_tell() + $size );
             }
