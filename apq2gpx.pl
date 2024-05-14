@@ -833,6 +833,7 @@ package ApqFile
         # - *        byte data
 
         # header
+        $self->_seek($offset);
         my $hdr = $self->_getvalmulti(magic => 'int', size => 'long', addOffset => 'pointer');
         return undef unless (defined $hdr->{addOffset});
 
@@ -935,7 +936,7 @@ package ApqFile
         {
             my $size = $arg;
             $raw = substr($self->{rawdata}, $self->{rawoffs}, $size);
-            $value = MIME::Base64::encode_base64($raw, '');
+            $value = $raw;
             $self->{rawoffs} += $size;
         }
         elsif ($type eq 'bin') # binary data of given size
