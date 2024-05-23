@@ -2,7 +2,7 @@
 #
 # flipflip's AlpineQuest (https://www.alpinequest.net/) tools
 #
-# Copyright (c) 2017-2022 Philippe Kehl <flipflip at oinkzwurgl dot org>
+# Copyright (c) 2017-2022 Philippe Kehl <flipflip at oinkzwurgl dot org> and contributors
 #
 # apqtool is free software: you can redistribute it and/or modify it under the terms of the GNU
 # General Public License as published by the Free Software Foundation, either version 3 of the
@@ -808,7 +808,7 @@ package ApqFile
         }
 
         # data
-        $data .= $self->_getval('raw', $hdr->{size});
+        $data .= $self->_getval('bin', $hdr->{size});
 
         # additional data?
         if ($hdr->{addOffset})
@@ -846,7 +846,7 @@ package ApqFile
         }
 
         # additional data
-        my $addData = $self->_getval('raw', $hdr->{size});
+        my $addData = $self->_getval('bin', $hdr->{size});
         return undef unless (defined $addData);
         $data .= $addData;
 
@@ -925,21 +925,21 @@ package ApqFile
             $value = unpack('d>', $raw);
             $self->{rawoffs} += 8;
         }
-        elsif ($type eq 'int+raw') # size int + "raw" data
+        elsif ($type eq 'int+raw') # size int + "raw" data, return data as base64 encoded
         {
             my $size = $self->_getval('int');
             $raw = substr($self->{rawdata}, $self->{rawoffs}, $size);
             $value = MIME::Base64::encode_base64($raw, '');
             $self->{rawoffs} += $size;
         }
-        elsif ($type eq 'raw') # "raw" binary data of given size
+        elsif ($type eq 'raw') # "raw" binary data of given size, return data as base64 encoded
         {
             my $size = $arg;
             $raw = substr($self->{rawdata}, $self->{rawoffs}, $size);
-            $value = $raw;
+            $value = MIME::Base64::encode_base64($raw, '');
             $self->{rawoffs} += $size;
         }
-        elsif ($type eq 'bin') # binary data of given size
+        elsif ($type eq 'bin') # binary data of given size, return data as-is
         {
             my $size = $arg;
             $raw = substr($self->{rawdata}, $self->{rawoffs}, $size);
