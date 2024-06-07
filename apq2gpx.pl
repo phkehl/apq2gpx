@@ -2,7 +2,7 @@
 #
 # flipflip's AlpineQuest (https://www.alpinequest.net/) tools
 #
-# Copyright (c) 2017-2022 Philippe Kehl <flipflip at oinkzwurgl dot org> and contributors
+# Copyright (c) 2017-2024 Philippe Kehl <flipflip at oinkzwurgl dot org> and contributors
 #
 # apqtool is free software: you can redistribute it and/or modify it under the terms of the GNU
 # General Public License as published by the Free Software Foundation, either version 3 of the
@@ -833,7 +833,7 @@ package ApqFile
         # - *        byte data
 
         # header
-        $self->_seek($offset);
+        #$self->_seek($offset); # FIXME: maybe required? See https://github.com/phkehl/apq2gpx/pull/3
         my $hdr = $self->_getvalmulti(magic => 'int', size => 'long', addOffset => 'pointer');
         return undef unless (defined $hdr->{addOffset});
 
